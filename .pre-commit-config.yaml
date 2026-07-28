@@ -1,0 +1,44 @@
+# Pre-commit hooks for github-runners.
+#
+# Install once per clone:
+#     make hooks        # == pre-commit install
+#
+# Run against the whole tree, not just staged files:
+#     pre-commit run --all-files
+#
+# gitleaks is the load-bearing hook here. This repo is public and its whole
+# purpose is holding runner registration config, so the failure mode that
+# matters is someone filling in a real ACCESS_TOKEN in `.env.example`
+# (tracked) instead of `.env` (gitignored). The hook blocks that at commit
+# time. It only sees the STAGED diff — for a full-history sweep run
+# `make scan`.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      # `language: golang` — pre-commit builds and caches the binary itself, so
+      # a fresh clone needs no machine-wide gitleaks install.
+      - id: gitleaks
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: check-added-large-files
+        args: [--maxkb=2048]
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+
+  - repo: https://github.com/rbubley/mirrors-prettier
+    rev: v3.9.6
+    hooks:
+      # Scoped to the markup this repo actually contains. `.env.example` and
+      # `Makefile` are deliberately out of scope — prettier has no formatter
+      # for either, and tab-indented Makefile recipes are load-bearing.
+      - id: prettier
+        types_or: [yaml, markdown, json]

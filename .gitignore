@@ -1,0 +1,6 @@
+# Runner secrets/config — never commit
+.env
+
+# Runner host state (work dir, docker layer cache) lives outside the repo
+# under ~/.gh-runners/, but ignore any local override paths just in case.
+.gh-runners/

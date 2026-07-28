@@ -1,0 +1,141 @@
+name: github-runners
+
+services:
+  # Docker daemon running inside Docker (Docker-in-Docker) — a real dockerd
+  # sidecar so CI workflows can use `docker build`, `docker buildx`, etc.
+  # 1:1 mirror of the Forgejo runner setup this was ported from (docker:dind,
+  # privileged, TLS disabled, persistent layer-cache volume, healthcheck-gated
+  # startup).
+  dind:
+    image: docker:dind
+    privileged: true
+    restart: unless-stopped
+    # Resource ceiling for ALL CI work. Job containers are created by this
+    # daemon and land in dind's own cgroup subtree, so these limits bound the
+    # whole job fleet collectively — there is no per-job knob on this side.
+    # Without them a single test suite saturated the host (measured: one job
+    # container at 307% CPU / 620 PIDs, host load ~6). Sized for a 24-core /
+    # 62Gi host: leave two thirds of the cores and ~30Gi for the desktop.
+    # podman-compose 1.5.0 maps these to `--cpus` / `-m` / `--pids-limit`;
+    # rootless enforcement needs cgroup-v2 delegation of cpu+memory+pids
+    # (verify: cat /sys/fs/cgroup/user.slice/user-$(id -u).slice/cgroup.controllers).
+    # NOTE: `memory` is a hard cap — exceeding it OOM-kills dockerd itself and
+    # takes any in-flight job with it. Raise rather than run it tight.
+    deploy:
+      resources:
+        limits:
+          cpus: "8"
+          memory: 32G
+          pids: 8192
+    environment:
+      DOCKER_TLS_CERTDIR: "" # Disable TLS — internal network only
+    volumes:
+      - dind-data:/var/lib/docker # Persist Docker image/layer cache
+      # Same paths as `runner`'s mounts below — job containers are created by
+      # THIS daemon, so it needs to resolve these bind-mount sources itself.
+      # NOTE: must NOT be under /tmp — docker:dind's own entrypoint mounts a
+      # fresh tmpfs over /tmp at startup, which silently shadows any bind mount
+      # placed under it (confirmed: /tmp/runner/work was invisible on dind's
+      # side despite being listed as a mount, causing job containers' _actions
+      # dir to be empty → "Cannot find module .../actions/checkout/.../dist/index.js").
+      - ~/.gh-runners/r1/data:/runner/work
+      - actions-runner-externals:/actions-runner/externals
+    networks:
+      - runner-net
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # One-shot: copy the runner image's baked-in /actions-runner/externals (node
+  # runtimes GitHub Actions job containers exec into, e.g. node24) onto a shared
+  # volume that BOTH `runner` and `dind` mount at the same path.
+  #
+  # Why: `runner` talks to `dind` over DOCKER_HOST=tcp://dind:2375. Job-container
+  # bind-mounts like `-v /actions-runner/externals:/__e:ro` are executed BY the
+  # dind daemon and resolved against ITS OWN filesystem, not the runner
+  # container's — so without this, /actions-runner/externals doesn't exist on
+  # dind at all (Docker silently auto-creates it empty), job containers get an
+  # empty /__e, and GitHub's own housekeeping exec fails with
+  # `stat /__e/node24/bin/node: no such file or directory` before any workflow
+  # step runs. Re-synced on every `compose up` (not just first run) so image tag
+  # bumps propagate instead of leaving the shared volume stale.
+  externals-sync:
+    image: myoung34/github-runner:latest
+    entrypoint:
+      [
+        "sh",
+        "-c",
+        "rm -rf /shared/* && cp -a /actions-runner/externals/. /shared/",
+      ]
+    volumes:
+      - actions-runner-externals:/shared
+
+  # Register QEMU binfmt handlers inside dockerd — runs once at startup then
+  # exits. Same one-shot pattern as the Forgejo side's `binfmt` service.
+  binfmt:
+    image: tonistiigi/binfmt:latest
+    privileged: true
+    environment:
+      DOCKER_HOST: tcp://dind:2375
+    networks:
+      - runner-net
+    depends_on:
+      dind:
+        condition: service_healthy
+    command: --install all
+
+  # GitHub Actions self-hosted runner.
+  #
+  # Image choice: myoung34/github-runner instead of the official
+  # ghcr.io/actions/actions-runner. The official image ships an empty runner
+  # binary that expects an operator to shell in and run config.sh/run.sh by
+  # hand (or wire a custom entrypoint) — there's no built-in auto-registration.
+  # myoung34/github-runner bakes exactly that missing piece: on container start
+  # it calls the GitHub API with ACCESS_TOKEN, mints a short-lived registration
+  # token, registers, and runs — a direct analog of the Forgejo
+  # `code.forgejo.org/forgejo/runner:12` image, which self-registers from the
+  # uuid+token baked into config.yaml. Same "single image, env/config-driven,
+  # self-registering, long-lived daemon" shape as the Forgejo side — so it's
+  # the natural mirror target here.
+  runner:
+    image: myoung34/github-runner:latest
+    restart: unless-stopped
+    # The runner process only polls GitHub and proxies to dind — the actual
+    # workload runs in job containers under `dind`, not here (measured idle:
+    # ~210MB / 0.6% CPU). These are guard-rails against a runaway agent, not a
+    # capacity budget. Applied PER REPLICA: `make start RUNNER_COUNT=N` scales
+    # this service, so N runners reserve N x these numbers.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 4G
+          pids: 1024
+    depends_on:
+      dind:
+        condition: service_healthy
+      externals-sync:
+        condition: service_completed_successfully
+    env_file:
+      - .env
+    environment:
+      DOCKER_HOST: tcp://dind:2375
+      # We bring our own dind sidecar (above) — don't let the entrypoint start
+      # a second, in-container dockerd.
+      START_DOCKER_SERVICE: "false"
+      RUNNER_WORKDIR: /runner/work
+    volumes:
+      - ~/.gh-runners/r1/data:/runner/work
+      - actions-runner-externals:/actions-runner/externals
+    networks:
+      - runner-net
+
+networks:
+  runner-net:
+
+volumes:
+  dind-data:
+  actions-runner-externals:
