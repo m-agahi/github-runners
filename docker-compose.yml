@@ -63,7 +63,12 @@ services:
   # step runs. Re-synced on every `compose up` (not just first run) so image tag
   # bumps propagate instead of leaving the shared volume stale.
   externals-sync:
-    image: myoung34/github-runner:latest
+    # MUST stay on the same tag as `runner` below. This service copies the
+    # runner image's bundled externals (node20/node24 + the housekeeping
+    # helpers) into the shared volume that `runner` then mounts, so a tag
+    # split here would hand the runner a different distro's binaries than
+    # the one it is itself running.
+    image: myoung34/github-runner:ubuntu-noble
     entrypoint:
       [
         "sh",
@@ -101,7 +106,26 @@ services:
   # self-registering, long-lived daemon" shape as the Forgejo side — so it's
   # the natural mirror target here.
   runner:
-    image: myoung34/github-runner:latest
+    # PINNED TO A CODENAME, NOT `:latest`. `:latest` tracks Ubuntu 20.04
+    # (focal) — verified from the image's own label, org.opencontainers.
+    # image.version=20.04 — and focal went EOL in May 2025. MariaDB has been
+    # dropping focal from https://mirror.mariadb.org/repo/11.4/ubuntu, which
+    # broke yadgar's `test-engine2-integration` job: that job runs BARE on
+    # this runner host (no `container:`) and installs `mariadb-client` from
+    # that repo, so `apt-get update` exited 100 with "The repository ...
+    # focal Release no longer has a Release file". Focal's own distro
+    # `mariadb-client` is 10.3, which predates the mysqldump -> mariadb-dump
+    # rename, so falling back to it does not rescue the job either.
+    #
+    # noble (24.04 LTS) is published by that MariaDB repo and its distro
+    # `mariadb-client` is 10.11, so both the upstream path and the fallback
+    # work. Verified drop-in: sudo / docker / curl / git / jq all present and
+    # the entrypoint still honors START_DOCKER_SERVICE.
+    #
+    # Keep this a floating codename tag (not a pinned runner version) so
+    # runner updates still arrive; only the base distro is pinned. When noble
+    # nears EOL, move to the next LTS codename here AND in `externals-sync`.
+    image: myoung34/github-runner:ubuntu-noble
     restart: unless-stopped
     # The runner process only polls GitHub and proxies to dind — the actual
     # workload runs in job containers under `dind`, not here (measured idle:
