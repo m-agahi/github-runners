@@ -100,7 +100,9 @@ make scan             # full-history secret sweep (gitleaks)
 
 Note: `make restart` reuses the existing containers, so it does **not** pick up
 changes to the resource limits or any other `docker-compose.yml` field — those
-need `make stop && make start` to recreate the containers.
+need `make stop && make start` to recreate the containers. It is safe for
+registration state: the runner clears its old registration files on every
+start and registers again (see the `runner` service in `docker-compose.yml`).
 
 Scale to multiple concurrent runners (see `.env.example`'s Scaling section —
 leave `RUNNER_NAME` unset when doing this):

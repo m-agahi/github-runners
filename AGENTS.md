@@ -48,6 +48,11 @@ Confirm the runner came up under the target's **Settings → Actions → Runners
 **`make restart` does not pick up `docker-compose.yml` changes.** It restarts
 the existing containers with their existing config. Any edit to resource
 limits, mounts, or env needs `make stop && make start` to recreate them.
+Restart is safe for registration state: the `runner` entrypoint wrapper deletes
+`.runner`, `.runner_migrated` and `.credentials*` on every start, so a
+container left half-registered by an unclean deregister re-registers instead of
+crash-looping on `Value cannot be null. (Parameter 'configuredSettings')`. Do
+not drop that wrapper, and keep its `command:` equal to the image's CMD.
 
 **Bind-mount paths must resolve on `dind`, not on `runner`.** Job containers
 are created by the `dind` daemon, so `-v /host/path:/x` is resolved against
