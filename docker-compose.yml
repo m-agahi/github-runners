@@ -127,6 +127,31 @@ services:
     # nears EOL, move to the next LTS codename here AND in `externals-sync`.
     image: myoung34/github-runner:ubuntu-noble
     restart: unless-stopped
+    # Start every container — first start, `make restart`, restart-policy
+    # respawn — from clean registration state. These files live in the
+    # container's writable layer (no volume covers /actions-runner itself), so
+    # a reused container keeps them. After an unclean deregister (host reboot
+    # during network loss) it kept `.runner_migrated` + `.credentials*` but not
+    # `.runner`; the runner counts `.runner_migrated` as "already configured",
+    # so config.sh refuses and run/remove crash on null `configuredSettings`
+    # (exit 2) — a crash loop only a recreate cleared. Clearing them is safe:
+    # the image's /entrypoint.sh re-registers with ACCESS_TOKEN (`config.sh
+    # --replace`) on every start unless CONFIGURED_ACTIONS_RUNNER_FILES_DIR is
+    # set, which this stack does not use.
+    #
+    # `exec` hands PID 1 to /entrypoint.sh (its dumb-init shebang still does
+    # signal forwarding + deregister-on-stop). Overriding `entrypoint:` drops
+    # the image's CMD, so `command:` restates it verbatim (from
+    # `podman image inspect`); it reaches /entrypoint.sh via "$$@" ("$$" is
+    # compose's escape for a literal "$"). Re-check both on an image bump.
+    entrypoint:
+      [
+        "sh",
+        "-c",
+        'rm -f /actions-runner/.runner /actions-runner/.runner_migrated /actions-runner/.credentials /actions-runner/.credentials_rsaparams && exec /entrypoint.sh "$$@"',
+        "--",
+      ]
+    command: ["./bin/Runner.Listener", "run", "--startuptype", "service"]
     # The runner process only polls GitHub and proxies to dind — the actual
     # workload runs in job containers under `dind`, not here (measured idle:
     # ~210MB / 0.6% CPU). These are guard-rails against a runaway agent, not a
