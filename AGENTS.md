@@ -45,10 +45,12 @@ Confirm the runner came up under the target's **Settings → Actions → Runners
 
 ## Traps
 
-**`make restart` does not pick up `docker-compose.yml` changes.** It restarts
-the existing containers with their existing config. Any edit to resource
-limits, mounts, or env needs `make stop && make start` to recreate them.
-Restart is safe for registration state: the `runner` entrypoint wrapper deletes
+**`make restart` recreates every container.** It pulls the runner image, then
+runs `make stop && make start`, so new images and any `docker-compose.yml` edit
+take effect — and any in-flight job dies (see Safety). The image tag floats and
+`DISABLE_AUTO_UPDATE=true` pins the runner to the image's version, so a stale
+image ends in `Runner version vX is deprecated and cannot receive messages`;
+`make restart` (or `make pull`) is the fix. Restart is safe for registration state: the `runner` entrypoint wrapper deletes
 `.runner`, `.runner_migrated` and `.credentials*` on every start, so a
 container left half-registered by an unclean deregister re-registers instead of
 crash-looping on `Value cannot be null. (Parameter 'configuredSettings')`. Do

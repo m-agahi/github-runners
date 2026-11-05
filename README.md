@@ -92,15 +92,16 @@ Check it's online: repo/org **Settings → Actions → Runners**.
 make start            # start all services
 make stop             # stop all services
 make logs             # follow runner logs
-make restart          # restart runner after config change
+make pull             # pull the latest runner image
+make restart          # pull, then stop + start (recreates containers)
 make setup-multiarch  # re-register QEMU binfmts (if dind restarted)
 make hooks            # install the git pre-commit hook (once per clone)
 make scan             # full-history secret sweep (gitleaks)
 ```
 
-Note: `make restart` reuses the existing containers, so it does **not** pick up
-changes to the resource limits or any other `docker-compose.yml` field — those
-need `make stop && make start` to recreate the containers. It is safe for
+Note: `make restart` pulls the runner image, then recreates all containers, so
+it picks up new images and any `docker-compose.yml` change. It kills any
+running job — check first (see AGENTS.md → Safety). It is safe for
 registration state: the runner clears its old registration files on every
 start and registers again (see the `runner` service in `docker-compose.yml`).
 
