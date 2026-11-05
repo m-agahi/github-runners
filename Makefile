@@ -1,4 +1,4 @@
-.PHONY: start stop restart logs setup-multiarch setup hooks scan
+.PHONY: start stop restart pull logs setup-multiarch setup hooks scan
 
 RUNNER_COUNT ?= 1
 
@@ -19,9 +19,18 @@ start:
 stop:
 	podman compose down
 
-# Restart just the runner(s) (e.g. after config change)
-restart:
-	podman compose restart runner
+# Pull the latest runner image. The `ubuntu-noble` tag floats and compose
+# never re-pulls a cached image; with DISABLE_AUTO_UPDATE=true a stale image
+# means a runner version GitHub eventually refuses ("is deprecated and cannot
+# receive messages"). externals-sync uses the same image and must match it.
+pull:
+	podman compose pull runner externals-sync
+
+# Pull, then recreate all services so new images and any docker-compose.yml
+# change take effect. Kills in-flight jobs — check `docker ps` in dind first.
+restart: pull
+	$(MAKE) stop
+	$(MAKE) start RUNNER_COUNT=$(RUNNER_COUNT)
 
 # Follow runner logs
 logs:
